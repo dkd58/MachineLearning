@@ -159,6 +159,7 @@ names(classe.rf$call)
 classe.rf$call
 classe.rf$y[[5]]
 confusionMatrix(trainx$classe,predict(classe.rf,trainx[,-53]))
+# the generalization error of over .99 is confirmed on the independent test set:
 confusionMatrix(testsetx$classe,predict(classe.rf,testsetx[,-53]))
 
 # So RandomForest is the winner ;-)
