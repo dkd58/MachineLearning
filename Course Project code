@@ -1,0 +1,182 @@
+setwd("../Course 8 - Practical Machine Learning")
+
+train <- read.csv("./data/pml-training.csv")
+predtest <- read.csv("./data/pml-testing.csv")
+
+dim(train)
+dim(predtest)
+names(train)
+head(train)
+table(train$classe)
+names(predtest)
+
+# this predtest dataset is the set for which we do not have the 
+# classe membership
+# so we need to separate off a testdataset for estimating the 
+# generalization error
+
+inTrain <- createDataPartition(y=train$classe,
+                               p=0.75, list=FALSE)
+trainset <- train[inTrain,]
+testset <- train[-inTrain,]
+dim(trainset)
+dim(testset)
+head(testset)
+names(testset)
+table(trainset$classe)
+table(testset$classe)
+
+# there are many missing values
+colSums(is.na(trainset))/dim(trainset)[1]
+# one isn't supposed to use the test data in any way, but it really doesn't
+# make sense to include features that are completely missing in the test set:
+sum(colSums(is.na(predtest))/dim(predtest)[1] == 1) # 100 columns in the test data have 100% NA => leave out
+sum(colSums(is.na(predtest))/dim(predtest)[1] < 1) # 60 columns are OK
+cols <- which(colSums(is.na(predtest))/dim(predtest)[1] < 1)
+length(cols)
+# none of the remaining columns (except 1-7) has any missings in the train data:
+sum(colSums(is.na(train[,cols]))) 
+# so we can use all these (60) columns (but the first 7 are not relevant)
+names(trainset[,cols])
+cols <- cols[-(1:7)]
+trainx <- trainset[,cols]
+testsetx <- testset[,cols]
+names(trainx)
+dim(trainx)
+
+# no concern regarding nzv's:
+nearZeroVar(trainx[, -53], saveMetrics = TRUE)
+# outliers?
+# which(trainx$gyros_forearm_y> 200)
+library(psych)
+outl <- outlier(trainx[,-53],bad=1)
+which(outl == max(outl))
+outl[6955]
+# remove extreme outlier row=6955
+trainx <- trainx[-6955,]
+dim(trainx)
+# once more
+outl <- outlier(trainx[,-53],bad=1)
+length(outl)
+which(outl == max(outl))
+outl[12019]
+hist(outl)
+which(outl > 1000) # 6 obs => too many to remove ;-)
+
+featurePlot(x=trainx[,c(1:4,53)],y=trainx$classe,plot="pairs") # 1 roll_belt, 2 total_accel_belt 6 pitch_belt
+featurePlot(x=trainx[,c(5:8,53)],y=trainx$classe,plot="pairs") # 1 roll_belt, 2 total_accel_belt 6 pitch_belt
+# etcetera!
+# this doesn't really help us much => difficult to see any differences
+
+cormat <- cor(trainx[,-53])
+cormat[abs(cormat)>.8]
+
+qplot(trainx$classe, trainx[,1], data=trainx,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, trainx[,2], data=trainx,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, trainx[,3], data=trainx,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, trainx[,4], data=trainx,fill=trainx$classe, geom=c("boxplot"))
+
+# conclusion: no clear picture on which features to use for prediction
+
+# Perform PCA in order to reduce dimensions
+preProc <- preProcess(trainx[,-53],method="pca",thresh=.8)
+preProc
+scree(trainx[,-53])
+# fa.parallel(trainx[,-53])
+names(preProc)
+PCmat <- predict(preProc,trainx[,-53])
+head(PCmat)
+# see if we can decide which PC's to use...
+plot(PCmat[,1],PCmat[,2],col=trainx[,53])
+plot(PCmat[,3],PCmat[,4],col=trainx[,53])
+plot(PCmat[,5],PCmat[,6],col=trainx[,53])
+plot(PCmat[,7],PCmat[,8],col=trainx[,53])
+plot(PCmat[,9],PCmat[,10],col=trainx[,53])
+plot(PCmat[,11],PCmat[,12],col=trainx[,53])
+plot(PCmat[,12],PCmat[,13],col=trainx[,53])
+
+qplot(trainx$classe, PCmat[,1], data=PCmat,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, PCmat[,2], data=PCmat,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, PCmat[,3], data=PCmat,fill=trainx$classe, geom=c("boxplot"))
+qplot(trainx$classe, PCmat[,4], data=PCmat,fill=trainx$classe, geom=c("boxplot"))
+# etc!
+# Doesn't really help either => let's just roll!
+
+set.seed(3774)
+modelFit <- train(trainx$classe ~ .,method="lda",data=PCmat)
+modelFit # accuracy is a mere .470
+names(modelFit)
+modelFit$results
+modelFit$pred
+modelFit[[21]]
+
+confusionMatrix(trainx$classe,predict(modelFit,PCmat))
+# see if generalisation error is similar to resampling error
+PCmattest <- predict(preProc,testsetx[,-53])
+confusionMatrix(testsetx$classe,predict(modelFit,PCmattest)) 
+# this is indeed the case (.466), so no overfitting
+
+# compare with pca within the train function:
+modelFit1a <- train(trainx$classe ~ .,preProcess="pca",thresh=.8,method="lda",data=trainx[])
+modelFit1a # this gives slightly better results (??): .531 !!
+
+# now compare with model using the full 60 features
+modelFit2 <- train(trainx$classe ~ .,method="lda",data=trainx)
+modelFit2 # accuracy is .700, so much higher than using PCs
+confusionMatrix(trainx$classe,predict(modelFit2,trainx))
+# this was in sample, now out-of-sample
+confusionMatrix(testsetx$classe,predict(modelFit2,testsetx))
+# generalisation error is even slightly higher (.701), so no overfitting here either 
+
+# compare with other modeling methods:
+modelFit3 <- train(trainx$classe ~ .,method="multinom",data=trainx[,-53])
+# accuracy is 0.665, so a bit less than the lda method
+
+# Now try rpart tree classification
+classe.rpart <- train(trainx$classe ~ .,method="rpart",data=trainx[,-53])
+classe.rpart # Accuracy equals only .505, so not too great...
+names(classe.rpart)
+# see what the tree looks like...
+install.packages("rattle")
+install.packages("rpart.plot")
+library(rattle)
+library(rpart.plot)
+fancyRpartPlot(classe.rpart$finalModel)
+# just checking...
+confusionMatrix(trainx$classe,predict(classe.rpart,trainx[,-53]))
+confusionMatrix(testsetx$classe,predict(classe.rpart,testsetx[,-53]))
+# still .485, so that's OK
+
+
+# Now a random forest model
+classe.rf <- randomForest(trainx$classe ~ ., data=trainx[,-53], importance=TRUE)
+classe.rf # only .46% error, zo accuracy >.99 !
+names(classe.rf)
+classe.rf$importance
+names(classe.rf$forest)
+classe.rf$forest$pid
+names(classe.rf$call)
+classe.rf$call
+classe.rf$y[[5]]
+confusionMatrix(trainx$classe,predict(classe.rf,trainx[,-53]))
+confusionMatrix(testsetx$classe,predict(classe.rf,testsetx[,-53]))
+
+# So RandomForest is the winner ;-)
+# Apply to the official test set with 20 unclassified observations
+answers <- predict(classe.rf,predtest)
+table(answers)
+
+# now write 20 separate files with the outcome letter for each test case
+# these must be submitted separately...
+
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+pml_write_files(answers)
+
+# Done!
